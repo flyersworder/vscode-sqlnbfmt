@@ -1,0 +1,82 @@
+{
+  "name": "sqlnbfmt",
+  "displayName": "sqlnbfmt — SQL Notebook Formatter",
+  "description": "Format SQL queries in Jupyter notebooks and Python files using sqlnbfmt",
+  "version": "0.1.0",
+  "publisher": "flyersworder",
+  "license": "MIT",
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#1e415e",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/flyersworder/vscode-sqlnbfmt.git"
+  },
+  "bugs": {
+    "url": "https://github.com/flyersworder/vscode-sqlnbfmt/issues"
+  },
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Formatters"
+  ],
+  "keywords": [
+    "python",
+    "sql",
+    "jupyter",
+    "notebook",
+    "marimo",
+    "formatter",
+    "sqlglot"
+  ],
+  "activationEvents": [
+    "onLanguage:python"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "sqlnbfmt",
+      "properties": {
+        "sqlnbfmt.path": {
+          "type": "string",
+          "default": "sqlnbfmt",
+          "description": "Path to the sqlnbfmt executable"
+        },
+        "sqlnbfmt.dialect": {
+          "type": "string",
+          "default": "",
+          "description": "SQL dialect (e.g., postgres, mysql). Leave empty for auto-detect."
+        },
+        "sqlnbfmt.configFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a sqlnbfmt config.yaml file"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "sqlnbfmt.formatNotebook",
+        "title": "sqlnbfmt: Format SQL in Notebook"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "vscode:prepublish": "npm run package",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.82.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "ts-loader": "^9.5.0",
+    "webpack": "^5.90.0",
+    "webpack-cli": "^5.1.0"
+  }
+}

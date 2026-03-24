@@ -1,0 +1,9 @@
+.github/
+src/
+node_modules/
+.vscode/
+tsconfig.json
+webpack.config.js
+*.ts
+*.map
+.gitignore
