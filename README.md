@@ -1,14 +1,14 @@
 # sqlnbfmt — SQL Notebook Formatter
 
-Format SQL queries in Jupyter notebooks and Python files directly from VS Code.
+Format SQL queries in Jupyter notebooks and Python files directly from VS Code. Works alongside Black, Ruff, or any other Python formatter.
 
 ## Features
 
+- **Works with Black/Ruff** — runs as a Code Action on save, so your Python formatter stays untouched
 - **Format on Save** — automatically formats SQL in `.ipynb` notebook cells and `.py` files
 - **Format Notebook** — command to format all SQL in an entire notebook at once
 - **Jupyter + Marimo** — works with `.ipynb` notebooks and Marimo `.py` notebooks
 - **Smart Detection** — finds SQL in Python strings, `%%sql` magic cells, `mo.sql()` calls, and f-strings
-- **Zero Config** — works out of the box with sensible defaults
 
 ## Prerequisites
 
@@ -20,14 +20,30 @@ pip install sqlnbfmt
 
 ## Usage
 
-### Format on Save
+### Recommended: Use alongside Black/Ruff
 
-Set sqlnbfmt as your default Python formatter and enable format on save:
+Keep your existing Python formatter and add sqlnbfmt as a Code Action on save. Ruff/Black formats your Python, sqlnbfmt formats your SQL strings — both run on every save.
 
 ```json
 {
   "[python]": {
-    "editor.defaultFormatter": "flyersworder.sqlnbfmt",
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.sqlnbfmt": "explicit"
+    }
+  }
+}
+```
+
+### Standalone: Use as the only formatter
+
+If you don't use another Python formatter, set sqlnbfmt as the default:
+
+```json
+{
+  "[python]": {
+    "editor.defaultFormatter": "flyerwolf.sqlnbfmt",
     "editor.formatOnSave": true
   },
   "notebook.formatOnSave.enabled": true

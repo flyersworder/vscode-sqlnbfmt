@@ -5,6 +5,8 @@ import * as path from "path";
 import * as os from "os";
 
 const OUTPUT_CHANNEL_NAME = "sqlnbfmt";
+const CODE_ACTION_KIND = vscode.CodeActionKind.Source.append("sqlnbfmt");
+
 let outputChannel: vscode.OutputChannel;
 
 function getConfig() {
@@ -79,6 +81,34 @@ function createFormattingEdits(
   return [vscode.TextEdit.replace(fullRange, formatted)];
 }
 
+/**
+ * CodeActionProvider that registers sqlnbfmt as a source action.
+ * This lets it run alongside other formatters (Black, Ruff) via
+ * editor.codeActionsOnSave: { "source.sqlnbfmt": "explicit" }
+ */
+class SQLFormatCodeActionProvider implements vscode.CodeActionProvider {
+  public static readonly providedCodeActionKinds = [CODE_ACTION_KIND];
+
+  provideCodeActions(
+    document: vscode.TextDocument
+  ): vscode.CodeAction[] | undefined {
+    const edits = createFormattingEdits(document, ".py");
+    if (edits.length === 0) {
+      return undefined;
+    }
+
+    const action = new vscode.CodeAction(
+      "Format SQL strings (sqlnbfmt)",
+      CODE_ACTION_KIND
+    );
+    action.edit = new vscode.WorkspaceEdit();
+    for (const edit of edits) {
+      action.edit.replace(document.uri, edit.range, edit.newText);
+    }
+    return [action];
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
 
@@ -91,6 +121,8 @@ export function activate(context: vscode.ExtensionContext) {
       `sqlnbfmt not found at "${config.path}". Install with: pip install sqlnbfmt`
     );
   }
+
+  // --- Formatter registration (for standalone use) ---
 
   // Format .py files on disk
   context.subscriptions.push(
@@ -106,7 +138,7 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Format notebook cells (each cell is a separate TextDocument)
+  // Format notebook cells
   context.subscriptions.push(
     vscode.languages.registerDocumentFormattingEditProvider(
       { scheme: "vscode-notebook-cell", language: "python" },
@@ -120,7 +152,28 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  // Command: format the entire active notebook (.ipynb) at once
+  // --- Code Action registration (for use alongside Black/Ruff) ---
+
+  // .py files on disk
+  context.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(
+      { scheme: "file", language: "python" },
+      new SQLFormatCodeActionProvider(),
+      { providedCodeActionKinds: SQLFormatCodeActionProvider.providedCodeActionKinds }
+    )
+  );
+
+  // Notebook cells
+  context.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider(
+      { scheme: "vscode-notebook-cell", language: "python" },
+      new SQLFormatCodeActionProvider(),
+      { providedCodeActionKinds: SQLFormatCodeActionProvider.providedCodeActionKinds }
+    )
+  );
+
+  // --- Command: format entire notebook ---
+
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "sqlnbfmt.formatNotebook",
@@ -139,7 +192,6 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        // Save first so the file on disk matches the editor
         await vscode.workspace.save(uri);
 
         const filePath = uri.fsPath;
@@ -159,7 +211,6 @@ export function activate(context: vscode.ExtensionContext) {
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
           });
 
-          // Revert the editor to pick up the on-disk changes
           await vscode.commands.executeCommand(
             "workbench.action.files.revert"
           );

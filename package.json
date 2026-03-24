@@ -2,7 +2,7 @@
   "name": "sqlnbfmt",
   "displayName": "sqlnbfmt — SQL Notebook Formatter",
   "description": "Format SQL queries in Jupyter notebooks and Python files using sqlnbfmt",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "flyerwolf",
   "license": "MIT",
   "icon": "icon.png",
