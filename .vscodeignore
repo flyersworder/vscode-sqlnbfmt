@@ -7,3 +7,7 @@ webpack.config.js
 *.ts
 *.map
 .gitignore
+out-test/
+test/
+tsconfig.test.json
+.vscode-test/
