@@ -79,13 +79,15 @@
     "package": "webpack --mode production --devtool hidden-source-map",
     "vscode:prepublish": "npm run package",
     "lint": "eslint src --ext ts",
-    "test": "tsc -p tsconfig.test.json && node --test out-test/test/cli.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test out-test/test/cli.test.js",
+    "test:e2e": "npm run compile && tsc -p tsconfig.test.json && node out-test/test/e2e/runTest.js"
   },
   "devDependencies": {
-    "@types/vscode": "^1.82.0",
     "@types/node": "^20.0.0",
-    "typescript": "^5.3.0",
+    "@types/vscode": "^1.82.0",
+    "@vscode/test-electron": "^3.1.0",
     "ts-loader": "^9.5.0",
+    "typescript": "^5.3.0",
     "webpack": "^5.90.0",
     "webpack-cli": "^5.1.0"
   }
