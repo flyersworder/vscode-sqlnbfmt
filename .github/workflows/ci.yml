@@ -16,3 +16,6 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npm run compile
+      # The tests also run the real CLI on a notebook cell
+      - run: pipx install sqlnbfmt
+      - run: npm test

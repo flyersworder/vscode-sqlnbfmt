@@ -9,14 +9,17 @@ Format SQL queries in Jupyter notebooks and Python files directly from VS Code. 
 - **Format Notebook** — command to format all SQL in an entire notebook at once
 - **Jupyter + Marimo** — works with `.ipynb` notebooks and Marimo `.py` notebooks
 - **Smart Detection** — finds SQL in Python strings, `%%sql` magic cells, `mo.sql()` calls, and f-strings
+- **Uses your project's configuration** — picks up `[tool.sqlnbfmt]` from the nearest `pyproject.toml`, like the `sqlnbfmt` command and its pre-commit hook
 
 ## Prerequisites
 
-Install the `sqlnbfmt` CLI tool:
+Install the `sqlnbfmt` CLI tool (0.6.0 or later recommended):
 
 ```bash
 pip install sqlnbfmt
 ```
+
+If it's installed in a virtual environment that isn't on your `PATH`, point the extension to it, e.g. `"sqlnbfmt.path": "${workspaceFolder}/.venv/bin/sqlnbfmt"`.
 
 ## Usage
 
@@ -60,15 +63,35 @@ This formats all SQL across every cell in the active notebook.
 
 ### Format a Cell
 
-Right-click in a notebook cell and select **Format Cell**, or use the keyboard shortcut (`Shift+Alt+F`).
+Right-click in a notebook cell and select **Format Cell**, or use the keyboard shortcut (`Shift+Alt+F`). Cells are formatted the way Jupyter does it: a `%%sql` cell is formatted as SQL, and `# sqlnbfmt: skip` skips just that cell.
 
-## Settings
+## Configuration
+
+sqlnbfmt's own options (dialect, which functions contain SQL, indentation) go in your project's `pyproject.toml`, so the extension, the command line and the pre-commit hook all format the same way:
+
+```toml
+[tool.sqlnbfmt]
+dialect = "postgres"
+extend_function_names = ["run_query"]  # recognized in addition to the defaults
+
+[tool.sqlnbfmt.formatting_options]
+indent_width = 2
+```
+
+The extension runs `sqlnbfmt` from the folder of the file being formatted, so the nearest `pyproject.toml` with a `[tool.sqlnbfmt]` table is used, searching up to the repository root. In a monorepo, each project can have its own settings. See the [sqlnbfmt documentation](https://github.com/flyersworder/sqlnbfmt#configuration) for all options.
+
+### Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `sqlnbfmt.path` | `sqlnbfmt` | Path to the sqlnbfmt executable |
-| `sqlnbfmt.dialect` | *(auto)* | SQL dialect: `postgres`, `mysql`, `bigquery`, etc. |
-| `sqlnbfmt.configFile` | *(none)* | Path to a `config.yaml` file |
+| `sqlnbfmt.path` | `sqlnbfmt` | The executable: a command on `PATH`, or a path. Relative paths and `${workspaceFolder}` are resolved against the workspace folder |
+| `sqlnbfmt.dialect` | *(empty)* | SQL dialect: `postgres`, `mysql`, `bigquery`, etc. Overrides the dialect in `pyproject.toml`; when empty, that one is used, or generic SQL |
+| `sqlnbfmt.configFile` | *(empty)* | A YAML config file, or a TOML file with a `[tool.sqlnbfmt]` table. Relative paths and `${workspaceFolder}` are resolved against the workspace folder. When empty, `pyproject.toml` is used as described above |
+
+## Troubleshooting
+
+- **Nothing happens on save:** check the **Output** panel (select *sqlnbfmt*). Errors such as a missing `sqlnbfmt` or an invalid configuration are also shown as a notification.
+- **A string isn't formatted:** sqlnbfmt leaves a SQL string unchanged when formatting it could change its meaning, e.g. when it would move a query parameter. The status bar briefly says so, and the Output panel lists each string with the reason.
 
 ## Example
 

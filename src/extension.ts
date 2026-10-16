@@ -1,79 +1,167 @@
 import * as vscode from "vscode";
-import { execFileSync } from "child_process";
-import { writeFileSync, readFileSync, unlinkSync } from "fs";
+import { execFile } from "child_process";
+import { existsSync } from "fs";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import {
+  Settings,
+  cellSource,
+  cliArgs,
+  failureSummary,
+  notebookWithCell,
+  parseLog,
+  resolveExecutable,
+  resolveFile,
+} from "./cli";
 
 const OUTPUT_CHANNEL_NAME = "sqlnbfmt";
 const CODE_ACTION_KIND = vscode.CodeActionKind.Source.append("sqlnbfmt");
+const CELL_SCHEME = "vscode-notebook-cell";
 
 let outputChannel: vscode.OutputChannel;
+// The last error shown as a notification, so formatting on every save doesn't
+// repeat it; cleared after a successful run.
+let lastShownError: string | undefined;
 
-function getConfig() {
-  const config = vscode.workspace.getConfiguration("sqlnbfmt");
-  return {
-    path: config.get<string>("path") || "sqlnbfmt",
-    dialect: config.get<string>("dialect") || "",
-    configFile: config.get<string>("configFile") || "",
-  };
+interface RunContext {
+  settings: Settings;
+  /** Where the CLI runs: pyproject.toml discovery starts here. */
+  cwd: string | undefined;
 }
 
-function formatCode(text: string, ext: string): string | null {
+/**
+ * Settings for a document, with relative paths resolved against its workspace
+ * folder, and the CLI run from the document's own folder, so that the nearest
+ * pyproject.toml with [tool.sqlnbfmt] is found (as when running sqlnbfmt there).
+ */
+function runContext(uri: vscode.Uri): RunContext {
+  const config = vscode.workspace.getConfiguration("sqlnbfmt", uri);
+  const workspaceFolder = (
+    vscode.workspace.getWorkspaceFolder(uri) ??
+    vscode.workspace.workspaceFolders?.[0]
+  )?.uri.fsPath;
+  const settings = {
+    path: resolveExecutable(
+      config.get<string>("path") || "sqlnbfmt",
+      workspaceFolder
+    ),
+    dialect: config.get<string>("dialect") || "",
+    configFile: resolveFile(config.get<string>("configFile") || "", workspaceFolder),
+  };
+  // A notebook cell's URI has the notebook's path
+  const isOnDisk = uri.scheme === "file" || uri.scheme === CELL_SCHEME;
+  const folder = isOnDisk ? path.dirname(uri.fsPath) : undefined;
+  const cwd =
+    folder && path.isAbsolute(folder) && existsSync(folder)
+      ? folder
+      : workspaceFolder;
+  return { settings, cwd };
+}
+
+interface RunResult {
+  ok: boolean;
+}
+
+function runCli(
+  args: string[],
+  context: RunContext,
+  timeout: number
+): Promise<RunResult> {
+  return new Promise((resolve) => {
+    execFile(
+      context.settings.path,
+      args,
+      { cwd: context.cwd, timeout, encoding: "utf-8" },
+      (error, stdout, stderr) => {
+        // The CLI logs to stdout; argparse reports usage errors on stderr
+        const output = [stdout, stderr].filter(Boolean).join("\n");
+        if (output.trim()) {
+          outputChannel.appendLine(output.trimEnd());
+        }
+        if (!error) {
+          lastShownError = undefined;
+          reportSkipped(output);
+          resolve({ ok: true });
+          return;
+        }
+        const err = error as NodeJS.ErrnoException & { killed?: boolean };
+        let message: string;
+        if (err.code === "ENOENT") {
+          message =
+            `sqlnbfmt not found at "${context.settings.path}". ` +
+            "Install it with: pip install sqlnbfmt, or set sqlnbfmt.path.";
+        } else if (err.killed) {
+          message = `sqlnbfmt timed out after ${timeout / 1000} s.`;
+        } else {
+          const exitCode = typeof err.code === "number" ? err.code : null;
+          message = `sqlnbfmt failed: ${failureSummary(output, exitCode)}`;
+        }
+        outputChannel.appendLine(`Error: ${message}`);
+        showError(message);
+        resolve({ ok: false });
+      }
+    );
+  });
+}
+
+function showError(message: string) {
+  if (message === lastShownError) {
+    return;
+  }
+  lastShownError = message;
+  vscode.window
+    .showErrorMessage(message, "Show Output")
+    .then((choice) => choice && outputChannel.show(true));
+}
+
+/** Strings the CLI left unformatted (e.g. unsafe to rewrite) are logged as
+ * warnings; mention them briefly, with details in the Output panel. */
+function reportSkipped(output: string) {
+  const skipped = parseLog(output).filter((e) =>
+    e.message.includes("SQL formatting skipped")
+  ).length;
+  if (skipped > 0) {
+    vscode.window.setStatusBarMessage(
+      `sqlnbfmt: ${skipped} SQL string${skipped > 1 ? "s" : ""} left ` +
+        "unformatted (see Output > sqlnbfmt)",
+      8000
+    );
+  }
+}
+
+/** Formats a document's text through a temporary file; null if unchanged. */
+async function formatText(document: vscode.TextDocument): Promise<string | null> {
+  const text = document.getText();
   if (!text.trim()) {
     return null;
   }
-
-  const config = getConfig();
-  const tmpFile = path.join(
-    os.tmpdir(),
-    `sqlnbfmt-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`
-  );
-
+  const isCell = document.uri.scheme === CELL_SCHEME;
+  const context = runContext(document.uri);
+  const dir = await mkdtemp(path.join(os.tmpdir(), "sqlnbfmt-"));
+  const file = path.join(dir, isCell ? "cell.ipynb" : "code.py");
   try {
-    writeFileSync(tmpFile, text, "utf-8");
-
-    const args = [tmpFile];
-    if (config.dialect) {
-      args.push("--dialect", config.dialect);
+    await writeFile(file, isCell ? notebookWithCell(text) : text, "utf-8");
+    const result = await runCli(cliArgs(file, context.settings), context, 15000);
+    if (!result.ok) {
+      return null;
     }
-    if (config.configFile) {
-      args.push("--config", config.configFile);
-    }
-
-    execFileSync(config.path, args, {
-      encoding: "utf-8",
-      timeout: 15000,
-      cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-    });
-
-    const formatted = readFileSync(tmpFile, "utf-8");
+    const written = await readFile(file, "utf-8");
+    const formatted = isCell ? cellSource(written) : written;
     return formatted !== text ? formatted : null;
-  } catch (err: unknown) {
-    const error = err as Error & { stderr?: Buffer | string };
-    outputChannel.appendLine(`Error: ${error.message}`);
-    if (error.stderr) {
-      outputChannel.appendLine(error.stderr.toString());
-    }
-    return null;
   } finally {
-    try {
-      unlinkSync(tmpFile);
-    } catch {
-      // ignore cleanup errors
-    }
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-function createFormattingEdits(
-  document: vscode.TextDocument,
-  ext: string
-): vscode.TextEdit[] {
+async function formattingEdits(
+  document: vscode.TextDocument
+): Promise<vscode.TextEdit[]> {
   const original = document.getText();
-  const formatted = formatCode(original, ext);
+  const formatted = await formatText(document);
   if (formatted === null) {
     return [];
   }
-
   const fullRange = new vscode.Range(
     document.positionAt(0),
     document.positionAt(original.length)
@@ -89,10 +177,17 @@ function createFormattingEdits(
 class SQLFormatCodeActionProvider implements vscode.CodeActionProvider {
   public static readonly providedCodeActionKinds = [CODE_ACTION_KIND];
 
-  provideCodeActions(
-    document: vscode.TextDocument
-  ): vscode.CodeAction[] | undefined {
-    const edits = createFormattingEdits(document, ".py");
+  async provideCodeActions(
+    document: vscode.TextDocument,
+    _range: vscode.Range,
+    context: vscode.CodeActionContext
+  ): Promise<vscode.CodeAction[] | undefined> {
+    // Only when asked for (on save, or the Source Action menu): VS Code also
+    // requests code actions on every cursor move, for the light bulb
+    if (!context.only?.contains(CODE_ACTION_KIND)) {
+      return undefined;
+    }
+    const edits = await formattingEdits(document);
     if (edits.length === 0) {
       return undefined;
     }
@@ -109,126 +204,63 @@ class SQLFormatCodeActionProvider implements vscode.CodeActionProvider {
   }
 }
 
+async function formatNotebook() {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage("No active notebook editor.");
+    return;
+  }
+
+  const uri = editor.notebook.uri;
+  if (uri.scheme !== "file") {
+    vscode.window.showWarningMessage("Can only format notebooks saved to disk.");
+    return;
+  }
+
+  await vscode.workspace.save(uri);
+  const context = runContext(uri);
+  const result = await runCli(cliArgs(uri.fsPath, context.settings), context, 30000);
+  if (result.ok) {
+    await vscode.commands.executeCommand("workbench.action.files.revert");
+    vscode.window.showInformationMessage("sqlnbfmt: Notebook formatted.");
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
 
-  // Check if sqlnbfmt is available
-  const config = getConfig();
-  try {
-    execFileSync(config.path, ["--help"], { timeout: 5000 });
-  } catch {
-    vscode.window.showWarningMessage(
-      `sqlnbfmt not found at "${config.path}". Install with: pip install sqlnbfmt`
+  // Check that sqlnbfmt is available, without delaying activation
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+  const check: RunContext = folder
+    ? runContext(folder)
+    : { settings: { path: "sqlnbfmt", dialect: "", configFile: "" }, cwd: undefined };
+  void runCli(["--help"], check, 10000);
+
+  const selectors: vscode.DocumentSelector[] = [
+    { scheme: "file", language: "python" },
+    { scheme: CELL_SCHEME, language: "python" },
+  ];
+  for (const selector of selectors) {
+    // As the formatter, for standalone use
+    context.subscriptions.push(
+      vscode.languages.registerDocumentFormattingEditProvider(selector, {
+        provideDocumentFormattingEdits: formattingEdits,
+      })
+    );
+    // As a code action, for use alongside Black/Ruff
+    context.subscriptions.push(
+      vscode.languages.registerCodeActionsProvider(
+        selector,
+        new SQLFormatCodeActionProvider(),
+        {
+          providedCodeActionKinds: SQLFormatCodeActionProvider.providedCodeActionKinds,
+        }
+      )
     );
   }
 
-  // --- Formatter registration (for standalone use) ---
-
-  // Format .py files on disk
   context.subscriptions.push(
-    vscode.languages.registerDocumentFormattingEditProvider(
-      { scheme: "file", language: "python" },
-      {
-        provideDocumentFormattingEdits(
-          document: vscode.TextDocument
-        ): vscode.TextEdit[] {
-          return createFormattingEdits(document, ".py");
-        },
-      }
-    )
-  );
-
-  // Format notebook cells
-  context.subscriptions.push(
-    vscode.languages.registerDocumentFormattingEditProvider(
-      { scheme: "vscode-notebook-cell", language: "python" },
-      {
-        provideDocumentFormattingEdits(
-          document: vscode.TextDocument
-        ): vscode.TextEdit[] {
-          return createFormattingEdits(document, ".py");
-        },
-      }
-    )
-  );
-
-  // --- Code Action registration (for use alongside Black/Ruff) ---
-
-  // .py files on disk
-  context.subscriptions.push(
-    vscode.languages.registerCodeActionsProvider(
-      { scheme: "file", language: "python" },
-      new SQLFormatCodeActionProvider(),
-      { providedCodeActionKinds: SQLFormatCodeActionProvider.providedCodeActionKinds }
-    )
-  );
-
-  // Notebook cells
-  context.subscriptions.push(
-    vscode.languages.registerCodeActionsProvider(
-      { scheme: "vscode-notebook-cell", language: "python" },
-      new SQLFormatCodeActionProvider(),
-      { providedCodeActionKinds: SQLFormatCodeActionProvider.providedCodeActionKinds }
-    )
-  );
-
-  // --- Command: format entire notebook ---
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "sqlnbfmt.formatNotebook",
-      async () => {
-        const editor = vscode.window.activeNotebookEditor;
-        if (!editor) {
-          vscode.window.showWarningMessage("No active notebook editor.");
-          return;
-        }
-
-        const uri = editor.notebook.uri;
-        if (uri.scheme !== "file") {
-          vscode.window.showWarningMessage(
-            "Can only format notebooks saved to disk."
-          );
-          return;
-        }
-
-        await vscode.workspace.save(uri);
-
-        const filePath = uri.fsPath;
-        const cfg = getConfig();
-        const args = [filePath];
-        if (cfg.dialect) {
-          args.push("--dialect", cfg.dialect);
-        }
-        if (cfg.configFile) {
-          args.push("--config", cfg.configFile);
-        }
-
-        try {
-          execFileSync(cfg.path, args, {
-            encoding: "utf-8",
-            timeout: 30000,
-            cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-          });
-
-          await vscode.commands.executeCommand(
-            "workbench.action.files.revert"
-          );
-          vscode.window.showInformationMessage(
-            "sqlnbfmt: Notebook formatted."
-          );
-        } catch (err: unknown) {
-          const error = err as Error & { stderr?: Buffer | string };
-          outputChannel.appendLine(`Error: ${error.message}`);
-          if (error.stderr) {
-            outputChannel.appendLine(error.stderr.toString());
-          }
-          vscode.window.showErrorMessage(
-            "sqlnbfmt formatting failed. See Output panel for details."
-          );
-        }
-      }
-    )
+    vscode.commands.registerCommand("sqlnbfmt.formatNotebook", formatNotebook)
   );
 
   outputChannel.appendLine("sqlnbfmt extension activated.");
