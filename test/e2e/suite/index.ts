@@ -38,6 +38,19 @@ async function openFile(...parts: string[]) {
   return vscode.workspace.openTextDocument(workspaceFile(...parts));
 }
 
+/** VS Code may cancel a request (e.g. while the editor settles); a cancelled
+ * request returns nothing to the user, so try once more. */
+async function retryIfCanceled<T>(request: () => Thenable<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (err) {
+    if (String(err).includes("Canceled")) {
+      return await request();
+    }
+    throw err;
+  }
+}
+
 /** Records error notifications instead of showing them. */
 function captureErrors(): string[] {
   const shown: string[] = [];
@@ -83,13 +96,17 @@ function trustedTests() {
   });
 
   test("the code action runs only when requested", async () => {
+    // Code actions come from an open editor, as on save
     const document = await openFile("root.py");
+    await vscode.window.showTextDocument(document);
     const range = new vscode.Range(0, 0, 0, 0);
-    const requested = await vscode.commands.executeCommand<vscode.CodeAction[]>(
-      "vscode.executeCodeActionProvider",
-      document.uri,
-      range,
-      "source.sqlnbfmt"
+    const requested = await retryIfCanceled(() =>
+      vscode.commands.executeCommand<vscode.CodeAction[]>(
+        "vscode.executeCodeActionProvider",
+        document.uri,
+        range,
+        "source.sqlnbfmt"
+      )
     );
     const action = requested.find((a) => a.kind?.value === "source.sqlnbfmt");
     assert.ok(action?.edit, "requested: an edit is offered");
