@@ -8,6 +8,7 @@ import {
   cellSource,
   cliArgs,
   failureSummary,
+  findOnPath,
   notebookWithCell,
   parseLog,
   resolveExecutable,
@@ -16,20 +17,47 @@ import {
 
 const ws = path.resolve("/work/project");
 
+const lookup = (command: string) =>
+  command === "sqlnbfmt" ? "/usr/local/bin/sqlnbfmt" : undefined;
+
 test("bare command names are looked up on PATH", () => {
-  assert.equal(resolveExecutable("sqlnbfmt", ws), "sqlnbfmt");
+  assert.equal(resolveExecutable("sqlnbfmt", ws, lookup), "/usr/local/bin/sqlnbfmt");
+  assert.equal(resolveExecutable("missing", ws, lookup), undefined);
 });
 
 test("relative executable paths resolve against the workspace folder", () => {
   assert.equal(
-    resolveExecutable(".venv/bin/sqlnbfmt", ws),
+    resolveExecutable(".venv/bin/sqlnbfmt", ws, lookup),
     path.join(ws, ".venv/bin/sqlnbfmt")
   );
   assert.equal(
-    resolveExecutable("${workspaceFolder}/.venv/bin/sqlnbfmt", ws),
+    resolveExecutable("${workspaceFolder}/.venv/bin/sqlnbfmt", ws, lookup),
     path.join(ws, ".venv/bin/sqlnbfmt")
   );
-  assert.equal(resolveExecutable("/usr/bin/sqlnbfmt", ws), "/usr/bin/sqlnbfmt");
+  assert.equal(
+    resolveExecutable("/usr/bin/sqlnbfmt", ws, lookup),
+    "/usr/bin/sqlnbfmt"
+  );
+});
+
+test("findOnPath searches only absolute PATH entries", () => {
+  const files = new Set(["/opt/bin/sqlnbfmt", "./sqlnbfmt", "sqlnbfmt"]);
+  const isFile = (file: string) => files.has(file);
+  // "" and "." mean the current folder, where an opened repo's files are
+  assert.equal(
+    findOnPath("sqlnbfmt", { PATH: ":.:/opt/bin" }, "linux", isFile),
+    "/opt/bin/sqlnbfmt"
+  );
+  assert.equal(findOnPath("sqlnbfmt", { PATH: ":." }, "linux", isFile), undefined);
+});
+
+test("findOnPath finds .exe files on Windows", () => {
+  const files = new Set(["C:\\Python\\Scripts\\sqlnbfmt.exe", "sqlnbfmt.exe"]);
+  const isFile = (file: string) => files.has(file);
+  assert.equal(
+    findOnPath("sqlnbfmt", { Path: ".;C:\\Python\\Scripts" }, "win32", isFile),
+    "C:\\Python\\Scripts\\sqlnbfmt.exe"
+  );
 });
 
 test("config files resolve against the workspace folder", () => {

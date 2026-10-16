@@ -84,7 +84,7 @@ The extension runs `sqlnbfmt` from the folder of the file being formatted, so th
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `sqlnbfmt.path` | `sqlnbfmt` | The executable: a command on `PATH`, or a path. Relative paths and `${workspaceFolder}` are resolved against the workspace folder |
+| `sqlnbfmt.path` | `sqlnbfmt` | The executable: a command on `PATH`, or a path. Relative paths and `${workspaceFolder}` are resolved against the workspace folder. In [Restricted Mode](https://code.visualstudio.com/docs/editor/workspace-trust), a workspace's value is ignored until you trust the folder |
 | `sqlnbfmt.dialect` | *(empty)* | SQL dialect: `postgres`, `mysql`, `bigquery`, etc. Overrides the dialect in `pyproject.toml`; when empty, that one is used, or generic SQL |
 | `sqlnbfmt.configFile` | *(empty)* | A YAML config file, or a TOML file with a `[tool.sqlnbfmt]` table. Relative paths and `${workspaceFolder}` are resolved against the workspace folder. When empty, `pyproject.toml` is used as described above |
 

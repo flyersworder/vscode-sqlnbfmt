@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { execFile } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
 import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import * as path from "path";
 import * as os from "os";
@@ -9,6 +9,7 @@ import {
   cellSource,
   cliArgs,
   failureSummary,
+  findOnPath,
   notebookWithCell,
   parseLog,
   resolveExecutable,
@@ -26,8 +27,22 @@ let lastShownError: string | undefined;
 
 interface RunContext {
   settings: Settings;
+  /** The executable, as an absolute path; undefined if not found on PATH. */
+  executable: string | undefined;
   /** Where the CLI runs: pyproject.toml discovery starts here. */
   cwd: string | undefined;
+}
+
+function isFile(file: string): boolean {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function lookupCommand(command: string): string | undefined {
+  return findOnPath(command, process.env, process.platform, isFile);
 }
 
 /**
@@ -36,19 +51,20 @@ interface RunContext {
  * pyproject.toml with [tool.sqlnbfmt] is found (as when running sqlnbfmt there).
  */
 function runContext(uri: vscode.Uri): RunContext {
+  // In Restricted Mode, VS Code ignores the workspace's sqlnbfmt.path (see
+  // restrictedConfigurations in package.json), so an untrusted folder can't
+  // choose the program that runs
   const config = vscode.workspace.getConfiguration("sqlnbfmt", uri);
   const workspaceFolder = (
     vscode.workspace.getWorkspaceFolder(uri) ??
     vscode.workspace.workspaceFolders?.[0]
   )?.uri.fsPath;
   const settings = {
-    path: resolveExecutable(
-      config.get<string>("path") || "sqlnbfmt",
-      workspaceFolder
-    ),
+    path: config.get<string>("path") || "sqlnbfmt",
     dialect: config.get<string>("dialect") || "",
     configFile: resolveFile(config.get<string>("configFile") || "", workspaceFolder),
   };
+  const executable = resolveExecutable(settings.path, workspaceFolder, lookupCommand);
   // A notebook cell's URI has the notebook's path
   const isOnDisk = uri.scheme === "file" || uri.scheme === CELL_SCHEME;
   const folder = isOnDisk ? path.dirname(uri.fsPath) : undefined;
@@ -56,7 +72,7 @@ function runContext(uri: vscode.Uri): RunContext {
     folder && path.isAbsolute(folder) && existsSync(folder)
       ? folder
       : workspaceFolder;
-  return { settings, cwd };
+  return { settings, executable, cwd };
 }
 
 interface RunResult {
@@ -68,9 +84,18 @@ function runCli(
   context: RunContext,
   timeout: number
 ): Promise<RunResult> {
+  if (!context.executable) {
+    const message =
+      `sqlnbfmt not found: "${context.settings.path}" is not on PATH. ` +
+      "Install it with: pip install sqlnbfmt, or set sqlnbfmt.path.";
+    outputChannel.appendLine(`Error: ${message}`);
+    showError(message);
+    return Promise.resolve({ ok: false });
+  }
+  const executable = context.executable;
   return new Promise((resolve) => {
     execFile(
-      context.settings.path,
+      executable,
       args,
       { cwd: context.cwd, timeout, encoding: "utf-8" },
       (error, stdout, stderr) => {
@@ -89,7 +114,7 @@ function runCli(
         let message: string;
         if (err.code === "ENOENT") {
           message =
-            `sqlnbfmt not found at "${context.settings.path}". ` +
+            `sqlnbfmt not found at "${executable}". ` +
             "Install it with: pip install sqlnbfmt, or set sqlnbfmt.path.";
         } else if (err.killed) {
           message = `sqlnbfmt timed out after ${timeout / 1000} s.`;
@@ -233,7 +258,11 @@ export function activate(context: vscode.ExtensionContext) {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
   const check: RunContext = folder
     ? runContext(folder)
-    : { settings: { path: "sqlnbfmt", dialect: "", configFile: "" }, cwd: undefined };
+    : {
+        settings: { path: "sqlnbfmt", dialect: "", configFile: "" },
+        executable: lookupCommand("sqlnbfmt"),
+        cwd: undefined,
+      };
   void runCli(["--help"], check, 10000);
 
   const selectors: vscode.DocumentSelector[] = [

@@ -18,17 +18,51 @@ function expandVariables(value: string, workspaceFolder: string | undefined) {
 }
 
 /**
- * The executable to run. A bare command ("sqlnbfmt") is looked up on PATH;
+ * Finds a bare command on PATH, as an absolute path. Only absolute PATH
+ * entries are searched: Windows would otherwise look in the current folder
+ * first, and the CLI runs in the formatted file's folder, so a sqlnbfmt.exe
+ * inside an opened repository could run instead of the installed one.
+ */
+export function findOnPath(
+  command: string,
+  env: Record<string, string | undefined>,
+  platform: string,
+  isFile: (file: string) => boolean
+): string | undefined {
+  const paths = platform === "win32" ? path.win32 : path.posix;
+  const extensions = platform === "win32" ? ["", ".exe", ".com"] : [""];
+  const pathVariable = env.PATH ?? env.Path ?? "";
+  for (const dir of pathVariable.split(paths.delimiter)) {
+    if (!dir || !paths.isAbsolute(dir)) {
+      continue;
+    }
+    for (const extension of extensions) {
+      const candidate = paths.join(dir, command + extension);
+      if (isFile(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The executable to run, as an absolute path, or undefined if a bare command
+ * isn't on PATH. A bare command ("sqlnbfmt") is looked up with ``lookup``;
  * a relative path (".venv/bin/sqlnbfmt") is relative to the workspace folder,
  * not to the folder the CLI runs in.
  */
 export function resolveExecutable(
   value: string,
-  workspaceFolder: string | undefined
-): string {
+  workspaceFolder: string | undefined,
+  lookup: (command: string) => string | undefined
+): string | undefined {
   const expanded = expandVariables(value, workspaceFolder);
   const isBareCommand = !expanded.includes("/") && !expanded.includes("\\");
-  if (isBareCommand || path.isAbsolute(expanded) || !workspaceFolder) {
+  if (isBareCommand) {
+    return lookup(expanded);
+  }
+  if (path.isAbsolute(expanded) || !workspaceFolder) {
     return expanded;
   }
   return path.resolve(workspaceFolder, expanded);

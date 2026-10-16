@@ -35,6 +35,15 @@
   "activationEvents": [
     "onLanguage:python"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode, the workspace's sqlnbfmt.path setting is ignored, so an untrusted folder can't choose the program that runs.",
+      "restrictedConfigurations": [
+        "sqlnbfmt.path"
+      ]
+    }
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
