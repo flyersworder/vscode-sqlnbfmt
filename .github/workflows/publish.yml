@@ -1,16 +1,51 @@
-name: Publish Extension
+# Builds the extension package for a release and attaches it to the release.
+#
+# Publishing to the Marketplace is a manual upload: Azure DevOps needs an
+# Azure subscription to create the organization a publishing token belongs
+# to. To release:
+#   1. Bump "version" in package.json and add a CHANGELOG.md section (via PR)
+#   2. Create a GitHub release with tag v<version> on the merge commit
+#   3. Download the attached sqlnbfmt-<version>.vsix and upload it on
+#      https://marketplace.visualstudio.com/manage/publishers/flyerwolf
+#      (the extension's ⋮ menu > Update)
+name: Package Extension
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach the package to (e.g. v0.3.0)
+        required: true
+
+permissions: {}
 
 jobs:
-  publish:
+  package:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the package to the release
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
       - run: npm ci
-      - run: npx vsce publish --pat ${{ secrets.VSCE_PAT }}
+      - name: Check the tag matches package.json
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Tag $TAG doesn't match package.json version $version"
+            exit 1
+          fi
+          echo "VSIX=sqlnbfmt-$version.vsix" >> "$GITHUB_ENV"
+      - run: npx vsce package --out "$VSIX"
+      - name: Attach the package to the release
+        run: gh release upload "$TAG" "$VSIX" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
